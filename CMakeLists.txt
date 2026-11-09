@@ -8,6 +8,14 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+option(TIDE_ISLAND_LIVE "Load Quickshell QML from this source checkout" OFF)
+set(TIDE_ISLAND_DEFAULT_QML_PATH "")
+if(TIDE_ISLAND_LIVE)
+    set(TIDE_ISLAND_DEFAULT_QML_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
+    # Quote the configured path for the Bash launcher.
+    string(REPLACE "'" "'\\''" TIDE_ISLAND_DEFAULT_QML_PATH "${TIDE_ISLAND_DEFAULT_QML_PATH}")
+endif()
+
 option(TIDE_ISLAND_WITH_NIRI "Build niri compositor integration" ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network WebSockets DBus Test Concurrent)
@@ -257,6 +265,11 @@ endif()
 endif()
 
 add_subdirectory(Tide-island-app)
+if(TIDE_ISLAND_LIVE)
+    target_compile_definitions(tide-island-config-app PRIVATE
+        TIDE_ISLAND_LIVE_QML_PATH="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+endif()
 
 # Main Backend Module (Combining all C++ components)
 qt_add_qml_module(IslandBackend
@@ -328,6 +341,7 @@ set_tests_properties(tlp_password PROPERTIES TIMEOUT 20)
 include(GNUInstallDirs)
 
 # Install Quickshell entry points and QML component folders to /usr/share/tide-island
+if(NOT TIDE_ISLAND_LIVE)
 install(FILES
     shell.qml
     DynamicIslandWindow.qml
@@ -341,6 +355,8 @@ install(DIRECTORY qml
         PATTERN "*.svg"
         PATTERN "*.json"
 )
+
+endif()
 
 # Install IslandBackend backing library to /usr/lib
 install(TARGETS IslandBackend
@@ -386,3 +402,11 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/tide-island.desktop DESTINATION ${CMAK
 
 # Install systemd user service
 install(FILES tide-island.service DESTINATION lib/systemd/user)
+
+add_executable(custom_page_layout_tests
+    backend/tests/custom_page_layout_tests.cpp
+    backend/UserConfigBackend.h backend/UserConfigBackend.cpp
+)
+target_include_directories(custom_page_layout_tests PRIVATE backend)
+target_link_libraries(custom_page_layout_tests PRIVATE Qt6::Core Qt6::Qml Qt6::Test)
+add_test(NAME custom_page_layout COMMAND custom_page_layout_tests)

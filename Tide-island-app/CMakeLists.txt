@@ -125,3 +125,12 @@ add_test(NAME tide_island_config_qml
 set_tests_properties(tide_island_config_qml PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
+
+add_executable(custom_page_editor_tests
+    tests/custom_page_editor_tests.cpp backend.hpp backend.cpp resources.qrc
+)
+target_include_directories(custom_page_editor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(custom_page_editor_tests PRIVATE APP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(custom_page_editor_tests PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Test)
+add_test(NAME custom_page_editor COMMAND custom_page_editor_tests)
+set_tests_properties(custom_page_editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

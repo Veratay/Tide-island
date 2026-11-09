@@ -12,6 +12,23 @@ import "qml/workspace"
 PanelWindow {
     id: root
     property var shellRootController: null
+    // Start with the status bar hidden and no reserved space.
+    property bool customBarManaged: true
+    property bool customBarEnabled: false
+
+    function toggleCustomBarWindow() {
+        customBarManaged = true;
+        customBarEnabled = !customBarEnabled;
+        autoHideHideTimer.stop();
+        if (customBarEnabled) {
+            islandContainer.showCustomCapsule();
+            showAutoHiddenIsland("manual");
+        } else {
+            islandContainer.smartRestoreState();
+            autoHideVisible = false;
+        }
+    }
+
     property string overviewPhase: "closed"
     property bool overviewPreloading: false
     readonly property bool overviewPreparing: overviewPhase === "preparing"
@@ -59,6 +76,8 @@ PanelWindow {
     property string autoHideRevealSource: "none"
 
     readonly property var userConfig: UserConfig
+
+    CustomPageConfig { id: customPageConfig }
 
     WeatherService {
         id: fallbackWeatherService
@@ -133,6 +152,20 @@ PanelWindow {
             surfaceRadius: 28
             transformDependencies: [calendarNoteShell.x, calendarNoteShell.y, calendarNoteShell.panelScale]
         }
+        InsetBlurRegion {
+            surface: leftCustomIsland
+            active: leftCustomIsland.visible && leftCustomIsland.opacity > 0.01
+                && root.userConfig.islandBackgroundOpacity > 0
+                && root.userConfig.islandBackgroundOpacity < 100
+            surfaceRadius: leftCustomIsland.radius
+        }
+        InsetBlurRegion {
+            surface: rightCustomIsland
+            active: rightCustomIsland.visible && rightCustomIsland.opacity > 0.01
+                && root.userConfig.islandBackgroundOpacity > 0
+                && root.userConfig.islandBackgroundOpacity < 100
+            surfaceRadius: rightCustomIsland.radius
+        }
         // Clip the completed union before sending it to the compositor. During
         // auto-hide the capsule leaves the window before its opacity reaches
         // zero. Hyprland can treat a nonempty, wholly offscreen blur region as
@@ -170,6 +203,20 @@ PanelWindow {
             height: fileShelfBubble.visible ? Math.ceil(fileShelfBubble.height) : 0
         }
         
+        Region {
+            intersection: Intersection.Combine
+            x: Math.floor(leftCustomIsland.x)
+            y: Math.floor(leftCustomIsland.y)
+            width: leftCustomIsland.visible ? Math.ceil(leftCustomIsland.width) : 0
+            height: leftCustomIsland.visible ? Math.ceil(leftCustomIsland.height) : 0
+        }
+        Region {
+            intersection: Intersection.Combine
+            x: Math.floor(rightCustomIsland.x)
+            y: Math.floor(rightCustomIsland.y)
+            width: rightCustomIsland.visible ? Math.ceil(rightCustomIsland.width) : 0
+            height: rightCustomIsland.visible ? Math.ceil(rightCustomIsland.height) : 0
+        }
         // Add existing detail shells
         Region {
             intersection: Intersection.Combine
@@ -223,7 +270,12 @@ PanelWindow {
     // capsule finishes its collapse animation. A later expansion interrupts
     // the pending shrink instead of letting a stale timer clip new content.
     property real retainedWindowHeight: 0
-    implicitHeight: Math.max(root.requestedWindowHeight, root.retainedWindowHeight)
+    // Resizing the shared layer surface can animate every island in the
+    // compositor. Keep its extent fixed while the three-island bar is active;
+    // mainCapsule owns the visible morph and the input mask limits hit testing.
+    implicitHeight: root.customBarEnabled && root.screen
+        ? Math.max(root.screen.height, root.requestedWindowHeight, root.retainedWindowHeight)
+        : Math.max(root.requestedWindowHeight, root.retainedWindowHeight)
 
     function reconcileWindowHeight() {
         if (root.requestedWindowHeight >= root.retainedWindowHeight) {
@@ -238,15 +290,10 @@ PanelWindow {
     onRequestedWindowHeightChanged: root.reconcileWindowHeight()
     Component.onCompleted: root.retainedWindowHeight = root.requestedWindowHeight
 
-    exclusiveZone: Math.ceil(root.baseExclusiveZone * root.exclusiveZoneProgress)
-    WlrLayershell.layer: islandContainer.wallpaperPickerLayerVisible
-        || islandContainer.applicationLauncherLayerVisible
-        || islandContainer.fileShelfLayerVisible
-        || islandContainer.clipboardLayerVisible
-        || islandContainer.weatherLayerVisible
-        || islandContainer.calendarLayerVisible
-        ? WlrLayer.Overlay
-        : WlrLayer.Top
+    exclusiveZone: root.customBarManaged
+        ? (root.customBarEnabled ? Math.ceil(userConfig.islandTopMargin + userConfig.islandHeight) : 0)
+        : Math.ceil(root.baseExclusiveZone * root.exclusiveZoneProgress)
+    WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: {
         if (islandContainer.controlCenterLayerVisible
                 || islandContainer.notificationCenterLayerVisible
@@ -299,7 +346,7 @@ PanelWindow {
     readonly property bool autoHideRestingState: islandContainer.islandState === "normal"
         || islandContainer.islandState === "custom"
         || islandContainer.islandState === "lyrics"
-    readonly property bool autoHideCanHideNow: autoHideEnabled
+    readonly property bool autoHideCanHideNow: !customBarEnabled && autoHideEnabled
         && autoHideRestingState
         && !root.overviewVisible
         && !root.connectivityPromptActive
@@ -309,8 +356,9 @@ PanelWindow {
         || root.connectivityPromptActive
         || root.anyConnectivityDetailMounted
     readonly property bool autoHideTargetVisible: autoHideMustShow
-        || (!autoHideForcedHidden && (!autoHideEnabled || autoHideVisible))
-    readonly property bool autoHideSuppressesTransientReveal: (autoHideEnabled || autoHideForcedHidden)
+        || (customBarManaged ? customBarEnabled
+            : (!autoHideForcedHidden && (!autoHideEnabled || autoHideVisible)))
+    readonly property bool autoHideSuppressesTransientReveal: (customBarManaged || autoHideEnabled || autoHideForcedHidden)
         && !autoHideTargetVisible
     property real autoHideProgress: autoHideTargetVisible ? 1 : 0
     readonly property bool exclusiveZoneTargetActive: (!autoHideEnabled && autoHideTargetVisible)
@@ -364,6 +412,15 @@ PanelWindow {
     readonly property int connectivityDetailAnimationDuration: 360
     readonly property string overviewWallpaperSource: overviewWallpaperCache.effectiveSource
     property string wallpaperPickerActiveWallpaper: userConfig.wallpaperPath
+
+    readonly property bool sideIslandsShown: root.customBarEnabled
+    property real sideIslandProgress: sideIslandsShown ? 1 : 0
+    Behavior on sideIslandProgress {
+        NumberAnimation {
+            duration: root.sideIslandsShown ? 120 : 300
+            easing.type: root.sideIslandsShown ? Easing.OutCubic : Easing.InCubic
+        }
+    }
 
     Behavior on autoHideProgress {
         NumberAnimation {
@@ -1215,14 +1272,18 @@ PanelWindow {
             id: systemState
 
             weatherService: root.weatherService
-            configuredLeftSwipeItems: userConfig.dynamicIslandLeftSwipeItems
+            volumePopupsEnabled: !root.customBarEnabled
+            configuredLeftSwipeItems: customPageConfig.centerItems
+            configuredLeftIslandItems: customPageConfig.leftItems
+            configuredRightIslandItems: customPageConfig.rightItems
             timeText: timeObj.currentTime
             dateText: timeObj.currentDateLabel
             currentTrack: islandContainer.currentTrack
             currentArtUrl: islandContainer.currentArtUrl
             currentWorkspace: islandContainer.currentWs
-            customSwipeActive: customSwipeLoader.active
-            statsVisible: customSwipeLoader.active && root.autoHideProgress > 0.001
+            customSwipeActive: customSwipeLoader.active || root.sideIslandProgress > 0.001
+            statsVisible: (customSwipeLoader.active && root.autoHideProgress > 0.001)
+                || root.sideIslandProgress > 0.001
             lyricsCavaActive: islandContainer.lyricsSwipeVisible
                 && islandContainer.rightSwipeProgress > 0.001
 
@@ -1843,6 +1904,8 @@ PanelWindow {
 
         function restoreRestingCapsule(forceImmediate) {
             if (forceImmediate === undefined) forceImmediate = false;
+            if (root.customBarEnabled)
+                restingState = "custom";
             const normalizedRestingState = normalizeRestingState(restingState);
             const targetSide = restingStateSide(normalizedRestingState);
             const shouldAnimateToSide = targetSide !== "none"
@@ -1868,7 +1931,7 @@ PanelWindow {
         }
 
         function setRestingState(nextState) {
-            restingState = normalizeRestingState(nextState);
+            restingState = root.customBarEnabled ? "custom" : normalizeRestingState(nextState);
         }
 
         function smartRestoreState() {
@@ -2013,6 +2076,7 @@ PanelWindow {
 
         function showWorkspaceCapsule(wsId) {
             currentWs = wsId;
+            if (root.customBarEnabled) return;
             if (root.autoHideSuppressesTransientReveal) return;
             if (islandState === "control_center" || islandState === "notification") return;
             const animateFromSide = currentTransientOriginSide();
@@ -2112,7 +2176,7 @@ PanelWindow {
         }
 
         onCurrentTrackChanged: {
-            if (userConfig.disableAutoExpandOnTrackChange) return;
+            if (root.customBarEnabled || userConfig.disableAutoExpandOnTrackChange) return;
             if (currentTrack !== ""
                     && islandState !== "control_center"
                     && islandState !== "notification"
@@ -2122,6 +2186,30 @@ PanelWindow {
                 if (islandState === "expanded" && !expandedByPlayerAutoOpen) return;
                 showExpandedPlayer(true);
             }
+        }
+
+        CustomSideIsland {
+            id: leftCustomIsland
+            items: systemState.leftIslandItems
+            cavaLevels: islandContainer.cavaLevels
+            revealProgress: root.sideIslandProgress
+            edgeMargin: customPageConfig.edgeMargin
+            maximumWidth: Math.max(0, root.width * userConfig.islandPositionX / 100
+                - Math.max(userConfig.islandWidth, islandContainer.customCapsuleWidth) / 2
+                - customPageConfig.edgeMargin - customPageConfig.gap)
+            x: edgeMargin
+        }
+
+        CustomSideIsland {
+            id: rightCustomIsland
+            items: systemState.rightIslandItems
+            cavaLevels: islandContainer.cavaLevels
+            revealProgress: root.sideIslandProgress
+            edgeMargin: customPageConfig.edgeMargin
+            maximumWidth: Math.max(0, root.width * (1 - userConfig.islandPositionX / 100)
+                - Math.max(userConfig.islandWidth, islandContainer.customCapsuleWidth) / 2
+                - customPageConfig.edgeMargin - customPageConfig.gap)
+            x: parent.width - width - edgeMargin
         }
 
         // --- UI 渲染：灵动岛主干 ---

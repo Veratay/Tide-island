@@ -31,6 +31,9 @@ QString tideQmlPath()
     const QString overridePath = QString::fromLocal8Bit(qgetenv("TIDE_ISLAND_QML_PATH"));
     if (!overridePath.isEmpty())
         return overridePath;
+#ifdef TIDE_ISLAND_LIVE_QML_PATH
+    return QString::fromUtf8(TIDE_ISLAND_LIVE_QML_PATH);
+#endif
     const QString installedPath = QDir::cleanPath(
         QCoreApplication::applicationDirPath() + QStringLiteral("/../share/tide-island"));
     return QFileInfo::exists(installedPath + QStringLiteral("/shell.qml"))

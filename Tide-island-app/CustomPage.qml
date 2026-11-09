@@ -7,7 +7,11 @@ Rectangle {
 
     signal selectionChanged(var itemIds)
 
-    readonly property string configKey: "dynamicIslandLeftSwipeItems"
+    readonly property string configKey: "customPageLayout"
+    readonly property var groupNames: ["leftItems", "centerItems", "rightItems"]
+    property int activeGroup: 1
+    property var layoutConfig: ({})
+    property bool loadingConfig: false
     readonly property var defaultItems: [
         "time", "date", "workspace", "storage", "battery",
         "cpu", "ram", "cava", "albumcover", "trackname"
@@ -21,6 +25,7 @@ Rectangle {
         { itemId: "volume", displayName: "Volume", previewText: "42%", previewIcon: "\u{F057E}", previewKind: "iconText", previewWidth: 82 },
         { itemId: "brightness", displayName: "Brightness", previewText: "68%", previewIcon: "\u{F00E0}", previewKind: "iconText", previewWidth: 82 },
         { itemId: "workspace", displayName: "Workspace", previewText: "Workspace 2", previewIcon: "", previewKind: "text", previewWidth: 118 },
+        { itemId: "storage", displayName: "Storage", previewText: "52%", previewIcon: "\u{F1C0}", previewKind: "iconText", previewWidth: 82 },
         { itemId: "cpu", displayName: "CPU", previewText: "CPU 38%", previewIcon: "\u{F035B}", previewKind: "iconText", previewWidth: 96 },
         { itemId: "ram", displayName: "RAM", previewText: "RAM 61%", previewIcon: "\u{F061A}", previewKind: "iconText", previewWidth: 96 },
         { itemId: "cava", displayName: "Cava", previewText: "", previewIcon: "", previewKind: "cava", previewWidth: 76 },
@@ -131,32 +136,59 @@ Rectangle {
     }
 
     function loadFromConfig() {
-        const source = listValues(ConfigStore.value(configKey, defaultItems));
-        const seen = {};
-        let removedLyrics = false;
-        selectedModel.clear();
+        loadingConfig = true;
+        const saved = ConfigStore.value(configKey, {});
+        const legacy = listValues(ConfigStore.value("dynamicIslandLeftSwipeItems", defaultItems));
+        const left = ["date", "time"];
+        const right = ["volume", "brightness", "cpu", "ram", "battery"];
+        const center = legacy.filter(id => left.indexOf(id) === -1 && right.indexOf(id) === -1);
+        layoutConfig = {
+            leftItems: listValues(saved.leftItems === undefined ? left : saved.leftItems),
+            centerItems: listValues(saved.centerItems === undefined ? center : saved.centerItems),
+            rightItems: listValues(saved.rightItems === undefined ? right : saved.rightItems),
+            edgeMargin: boundedNumber(saved.edgeMargin, 12, 0, 200),
+            gap: boundedNumber(saved.gap, 16, 0, 200)
+        };
+        edgeMarginControl.value = layoutConfig.edgeMargin;
+        gapControl.value = layoutConfig.gap;
+        loadSelectedGroup();
+        loadingConfig = false;
+    }
 
+    function boundedNumber(value, fallback, minimum, maximum) {
+        const number = Number(value === undefined ? fallback : value);
+        return isFinite(number) ? Math.max(minimum, Math.min(maximum, Math.round(number))) : fallback;
+    }
+
+    function selectGroup(index) {
+        if (activeGroup === index) return;
+        clearDrag();
+        activeGroup = index;
+        loadSelectedGroup();
+    }
+
+    function loadSelectedGroup() {
+        const source = listValues(layoutConfig[groupNames[activeGroup]]);
+        const seen = {};
+        selectedModel.clear();
         for (let index = 0; index < source.length; index++) {
             const itemId = normalizeItemId(source[index]);
-            if (itemId === "lyrics") {
-                removedLyrics = true;
-                continue;
-            }
-            if (!isSupported(itemId) || seen[itemId])
-                continue;
-
+            if (!isSupported(itemId) || seen[itemId]) continue;
             selectedModel.append({ itemId: itemId });
             seen[itemId] = true;
         }
+    }
 
-        if (removedLyrics)
-            notifySelectionChanged();
+    function saveLayout() {
+        if (loadingConfig) return;
+        ConfigStore.setValue(configKey, layoutConfig);
+        ConfigStore.save();
     }
 
     function notifySelectionChanged() {
         const ids = selectedIds();
-        ConfigStore.setValue(configKey, ids);
-        ConfigStore.save();
+        layoutConfig[groupNames[activeGroup]] = ids;
+        saveLayout();
         selectionChanged(ids);
     }
 
@@ -305,6 +337,75 @@ Rectangle {
         anchors.right: parent.right
         anchors.rightMargin: 18
         spacing: 18
+
+        Row {
+            width: parent.width
+            spacing: 8
+            Repeater {
+                model: ["Left island", "Center island", "Right island"]
+                Button {
+                    width: (selectorColumn.width - 16) / 3
+                    text: modelData
+                    onClicked: root.selectGroup(index)
+                    background: Rectangle {
+                        radius: 8
+                        color: root.activeGroup === index ? Theme.selectedColor : Theme.controlHoverColor
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: root.activeGroup === index ? "white" : Theme.textColor
+                        font.family: Theme.textFontFamily
+                        font.pixelSize: 14
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+            }
+        }
+
+        Text {
+            width: parent.width
+            text: "Drag modules into the selected island; drag them back to remove. "
+                + "Only the center island morphs into other views."
+            color: Theme.textColor
+            opacity: 0.7
+            font.family: Theme.textFontFamily
+            font.pixelSize: 13
+            wrapMode: Text.WordWrap
+        }
+
+        Row {
+            width: parent.width
+            spacing: 12
+            Text {
+                text: "Screen edge margin"
+                color: Theme.textColor
+                font.family: Theme.textFontFamily
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            SpinBox {
+                id: edgeMarginControl
+                from: 0; to: 200; editable: true
+                onValueModified: {
+                    root.layoutConfig.edgeMargin = value;
+                    root.saveLayout();
+                }
+            }
+            Text {
+                text: "Island gap"
+                color: Theme.textColor
+                font.family: Theme.textFontFamily
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            SpinBox {
+                id: gapControl
+                from: 0; to: 200; editable: true
+                onValueModified: {
+                    root.layoutConfig.gap = value;
+                    root.saveLayout();
+                }
+            }
+        }
 
         Item {
             id: paletteDropZone

@@ -11,22 +11,30 @@ Item {
     signal transientRequested(string icon, real progress, string text)
 
     property var configuredLeftSwipeItems: []
+    property var configuredLeftIslandItems: []
+    property var configuredRightIslandItems: []
+    readonly property var configuredLeftIslandIds: buildNormalizedSwipeItemIds(configuredLeftIslandItems)
+    readonly property var configuredRightIslandIds: buildNormalizedSwipeItemIds(configuredRightIslandItems)
+    readonly property var configuredAllIds: configuredLeftSwipeIds.concat(configuredLeftIslandIds, configuredRightIslandIds)
+    property var leftIslandItems: []
+    property var rightIslandItems: []
     property string timeText: "00:00"
     property string dateText: "Mon, Jan 01"
     property string currentTrack: ""
     property string currentArtUrl: ""
     property int currentWorkspace: 1
+    property bool volumePopupsEnabled: true
     property bool customSwipeActive: false
     property bool statsVisible: customSwipeActive
     property bool lyricsCavaActive: false
     property var weatherService: null
 
     readonly property var configuredLeftSwipeIds: buildNormalizedSwipeItemIds(configuredLeftSwipeItems)
-    readonly property bool usesSystemStatsModule: configuredLeftSwipeIds.indexOf("cpu") !== -1
-        || configuredLeftSwipeIds.indexOf("ram") !== -1
-    readonly property bool usesStorageModule: configuredLeftSwipeIds.indexOf("storage") !== -1
-    readonly property bool usesCavaModule: configuredLeftSwipeIds.indexOf("cava") !== -1
-    readonly property bool usesWeatherModule: configuredLeftSwipeIds.indexOf("weather") !== -1
+    readonly property bool usesSystemStatsModule: configuredAllIds.indexOf("cpu") !== -1
+        || configuredAllIds.indexOf("ram") !== -1
+    readonly property bool usesStorageModule: configuredAllIds.indexOf("storage") !== -1
+    readonly property bool usesCavaModule: configuredAllIds.indexOf("cava") !== -1
+    readonly property bool usesWeatherModule: configuredAllIds.indexOf("weather") !== -1
     readonly property bool hasCustomLeftItems: customLeftItems.length > 0
     readonly property string systemServicesClientId: "island-system-state-" + Math.random().toString(36).slice(2)
     readonly property string defaultStatusIcon: "\ud83c\udfa7"
@@ -62,6 +70,14 @@ Item {
     property real _pendingBrightnessValue: 0.0
     property string _customLeftItemsSignature: ""
 
+    onConfiguredLeftIslandIdsChanged: {
+        syncCustomLeftItems();
+        refreshMissingValues();
+    }
+    onConfiguredRightIslandIdsChanged: {
+        syncCustomLeftItems();
+        refreshMissingValues();
+    }
     onConfiguredLeftSwipeIdsChanged: {
         syncCustomLeftItems();
         refreshMissingValues();
@@ -318,12 +334,16 @@ Item {
 
     function syncCustomLeftItems() {
         const nextItems = buildCustomSwipeItems(configuredLeftSwipeIds);
-        const nextSignature = customSwipeItemsSignature(nextItems);
+        const leftItems = buildCustomSwipeItems(configuredLeftIslandIds);
+        const rightItems = buildCustomSwipeItems(configuredRightIslandIds);
+        const nextSignature = JSON.stringify([nextItems, leftItems, rightItems]);
         if (nextSignature === _customLeftItemsSignature)
             return;
 
         _customLeftItemsSignature = nextSignature;
         customLeftItems = nextItems;
+        leftIslandItems = leftItems;
+        rightIslandItems = rightItems;
     }
 
     Timer {
@@ -345,6 +365,7 @@ Item {
                     || Math.abs(root._pendingVolVal - root._lastVolVal) > 0.001) {
                 root._lastVolType = root._pendingVolType;
                 root._lastVolVal = root._pendingVolVal;
+                if (!root.volumePopupsEnabled) return;
                 root.transientRequested(
                     root._pendingVolType === "MUTE" ? root.statusIcon("mute") : root.statusIcon("volume"),
                     root._pendingVolVal,

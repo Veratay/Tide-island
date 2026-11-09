@@ -40,9 +40,15 @@ Scope {
         onLockFailed: reason => shellRoot.showNotificationAll("Tide Island", "Lock screen unavailable", reason)
     }
 
+    Process {
+        id: lockSessionProcess
+        command: ["loginctl", "lock-session"]
+    }
+
     function lockScreen() {
         closeOverviewAll();
-        lockScreenController.lock();
+        if (!lockSessionProcess.running)
+            lockSessionProcess.running = true;
     }
 
     function forEachWindow(callback) {
@@ -264,6 +270,10 @@ Scope {
 
         function showTimer() {
             shellRoot.forFocusedWindow((window) => window.showTimerWindow());
+        }
+
+        function toggleCustomBar() {
+            shellRoot.forFocusedWindow((window) => window.toggleCustomBarWindow());
         }
 
         function showCustom() {

@@ -84,3 +84,12 @@ PULL_REQUEST.md
 .DS_Store
 Thumbs.db
 compilar.sh
+
+# user config
+userconfig.json
+current-wallpaper
+config-app.ini
+bin/
+application-launcher.json
+hyprland-shortcuts.conf
+spicetify/

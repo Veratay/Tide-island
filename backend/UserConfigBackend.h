@@ -13,6 +13,7 @@ class UserConfigBackend final : public QObject {
     QML_SINGLETON
 
     Q_PROPERTY(QString userConfigPath READ userConfigPath CONSTANT FINAL)
+    Q_PROPERTY(QVariantMap customPageLayout READ customPageLayout NOTIFY customPageLayoutChanged FINAL)
     Q_PROPERTY(QVariantMap lockScreen READ lockScreen NOTIFY lockScreenChanged FINAL)
     Q_PROPERTY(QString configError READ configError NOTIFY configErrorChanged FINAL)
     Q_PROPERTY(QString defaultWallpaperPath READ defaultWallpaperPath WRITE setDefaultWallpaperPath NOTIFY defaultWallpaperPathChanged FINAL)
@@ -74,6 +75,7 @@ class UserConfigBackend final : public QObject {
 
 public:
     explicit UserConfigBackend(QObject *parent = nullptr);
+    QVariantMap customPageLayout() const { return m_customPageLayout; }
     QVariantMap lockScreen() const { return m_lockScreen; }
 
     QString userConfigPath() const;
@@ -171,6 +173,7 @@ signals:
     void dynamicIslandMiddleButtonChanged();
     void dynamicIslandMiddleActionChanged();
     void dynamicIslandLeftSwipeItemsChanged();
+    void customPageLayoutChanged();
     void disableAutoExpandOnTrackChangeChanged();
     void islandShowWorkspaceOnAutoHideChanged();
     void hoverExpandActionChanged();
@@ -232,6 +235,7 @@ private:
     int m_dynamicIslandMiddleButton = 2;
     QString m_dynamicIslandMiddleAction = QStringLiteral("toggleClipboard");
     QVariantList m_dynamicIslandLeftSwipeItems;
+    QVariantMap m_customPageLayout;
     bool m_islandShowWorkspaceOnAutoHide = true;
     bool m_disableAutoExpandOnTrackChange = false;
     int m_hoverExpandAction = 1;

@@ -16,6 +16,9 @@ INSTALL_DEPENDENCIES=1
 QUICKSHELL_MODE="auto"
 QUICKSHELL_SKIP_REQUESTED=0
 QUICKSHELL_FORCE_REQUESTED=0
+LIVE=0
+REMOVE_SYSTEM_QML=0
+SYSTEM_QML_FILES=()
 ENABLE_SERVICE=1
 UNINSTALL=0
 DRY_RUN=0
@@ -73,11 +76,12 @@ Options:
   --skip-quickshell       Require an existing /usr/bin/quickshell.
   --force-build-quickshell
                           Rebuild the pinned Quickshell version.
+  --live                  Load Quickshell QML directly from this source directory.
   --no-service            Do not enable or start the systemd user service.
   --uninstall             Remove the source-installed Tide Island files.
   --dry-run               Print actions without changing the system.
   --force                 Allow Arch/source-package conflicts and overwrite.
-  -y, --yes               Do not ask for confirmation.
+  -y, --yes               Skip installation confirmation (QML removal still prompts).
   -h, --help              Show this help.
 
 Supported dependency installers: apt, dnf, and zypper.
@@ -98,6 +102,9 @@ parse_args() {
       --force-build-quickshell)
         QUICKSHELL_MODE="force"
         QUICKSHELL_FORCE_REQUESTED=1
+        ;;
+      --live)
+        LIVE=1
         ;;
       --no-service)
         ENABLE_SERVICE=0
@@ -183,7 +190,14 @@ load_os_release() {
 confirm() {
   ((ASSUME_YES || DRY_RUN)) && return 0
   [[ -t 0 ]] || die "confirmation requires a terminal; rerun with --yes"
-  printf 'Install Tide Island to /usr on %s %s? [y/N] ' "$ID" "${VERSION_ID:-}"
+  if ((LIVE)); then
+    printf 'Install Tide Island in live mode on %s %s?\n' "$ID" "${VERSION_ID:-}"
+    printf '  Quickshell QML: %s (loaded directly)\n' "$(repo_root)"
+    printf '  Binaries and native modules: %s\n' "$PREFIX"
+    printf 'Continue? [y/N] '
+  else
+    printf 'Install Tide Island to /usr on %s %s? [y/N] ' "$ID" "${VERSION_ID:-}"
+  fi
   local answer
   read -r answer
   [[ "$answer" == "y" || "$answer" == "Y" ]] || die "installation canceled"
@@ -228,9 +242,9 @@ apt_install_dependencies() {
     qt6-wayland qt6-wayland-dev qt6-wayland-private-dev
     qt6-shadertools-dev libqt6svg6 libqt6svg6-dev
     libudev-dev libdrm-dev libwayland-dev wayland-protocols
-    libgbm-dev vulkan-headers libjemalloc-dev libcli11-dev spirv-tools
+    libgbm-dev libjemalloc-dev libcli11-dev spirv-tools libpam0g-dev
     wireplumber pulseaudio-utils brightnessctl dbus upower bluez
-    policykit-1 zenity network-manager wl-clipboard cliphist power-profiles-daemon
+    zenity network-manager wl-clipboard cliphist power-profiles-daemon
   )
 
   log "Installing Debian/Ubuntu build and runtime dependencies"
@@ -265,7 +279,7 @@ dnf_install_dependencies() {
     qt6-qt5compat
     qt6-qtshadertools-devel qt6-qtsvg-devel
     systemd-devel libdrm-devel wayland-devel wayland-protocols-devel
-    mesa-libgbm-devel vulkan-headers jemalloc-devel cli11-devel spirv-tools-devel
+    mesa-libgbm-devel vulkan-headers jemalloc-devel cli11-devel spirv-tools-devel pam-devel
     wireplumber pulseaudio-utils brightnessctl dbus-daemon upower bluez bluez-tools
     polkit zenity NetworkManager wl-clipboard cliphist power-profiles-daemon
   )
@@ -299,7 +313,7 @@ zypper_install_dependencies() {
     qt6-qt5compat-imports
     qt6-shadertools-devel qt6-svg-devel
     systemd-devel libdrm-devel wayland-devel wayland-protocols-devel
-    Mesa-libgbm-devel vulkan-headers libjemalloc-devel cli11-devel spirv-tools-devel
+    Mesa-libgbm-devel vulkan-headers libjemalloc-devel cli11-devel spirv-tools-devel pam-devel
     wireplumber pulseaudio-utils brightnessctl dbus-1 upower bluez
     polkit zenity NetworkManager wl-clipboard cliphist power-profiles-daemon
   )
@@ -436,18 +450,21 @@ build_quickshell() {
   fi
 
   if [[ -x /usr/bin/quickshell && "$QUICKSHELL_MODE" != "force" ]]; then
-    local current_qt recorded_qt
+    local current_qt recorded_qt recorded_pam
     current_qt="$(qt_version)"
     recorded_qt=""
+    recorded_pam=""
     if [[ -r "$QUICKSHELL_BUILD_INFO" ]]; then
       recorded_qt="$(sed -n 's/^qt=//p' "$QUICKSHELL_BUILD_INFO" | head -n1)"
+      recorded_pam="$(sed -n 's/^pam=//p' "$QUICKSHELL_BUILD_INFO" | head -n1)"
     fi
-    if [[ -z "$recorded_qt" || "$recorded_qt" == "$current_qt" ]]; then
+    if [[ ! -r "$QUICKSHELL_BUILD_INFO" ]] \
+        || [[ "$recorded_qt" == "$current_qt" && "$recorded_pam" == "enabled" ]]; then
       log "Using the existing /usr/bin/quickshell"
       /usr/bin/quickshell --version 2>/dev/null || true
       return
     fi
-    warn "Qt changed from $recorded_qt to $current_qt; rebuilding the source-installed Quickshell"
+    warn "Qt or required PAM support changed; rebuilding the source-installed Quickshell"
   fi
 
   local cache_dir source_dir build_dir
@@ -470,14 +487,14 @@ build_quickshell() {
     -DCRASH_HANDLER=OFF \
     -DX11=OFF \
     -DSERVICE_PIPEWIRE=OFF \
-    -DSERVICE_PAM=OFF \
+    -DSERVICE_PAM=ON \
     -DSERVICE_POLKIT=OFF
   run cmake --build "$build_dir" --parallel
   run sudo cmake --install "$build_dir"
   if ((!DRY_RUN)); then
     local build_info
     build_info="$(mktemp)"
-    printf 'version=%s\ncommit=%s\nqt=%s\n' \
+    printf 'version=%s\ncommit=%s\nqt=%s\npam=enabled\n' \
       "$QUICKSHELL_VERSION" "$QUICKSHELL_COMMIT" "$(qt_version)" > "$build_info"
     sudo install -d -m 0755 "$STATE_DIR"
     sudo install -m 0644 "$build_info" "$QUICKSHELL_BUILD_INFO"
@@ -504,6 +521,54 @@ remove_manifest_files() {
   done
 }
 
+# Only the Quickshell source files are candidates; installed helpers and Qt
+# modules remain available to the live checkout.
+is_system_qml() {
+  [[ "$1" == "$PREFIX/share/tide-island/shell.qml" \
+      || "$1" == "$PREFIX/share/tide-island/DynamicIslandWindow.qml" \
+      || "$1" == "$PREFIX/share/tide-island/qml/"* ]]
+}
+
+prepare_live_install() {
+  ((LIVE)) || return 0
+  local path answer
+  local system_qml="$PREFIX/share/tide-island"
+  for path in "$system_qml/shell.qml" "$system_qml/DynamicIslandWindow.qml"; do
+    [[ ! -f "$path" && ! -L "$path" ]] || SYSTEM_QML_FILES+=("$path")
+  done
+  if [[ -d "$system_qml/qml" && ! -L "$system_qml/qml" ]]; then
+    while IFS= read -r -d '' path; do
+      SYSTEM_QML_FILES+=("$path")
+    done < <(find "$system_qml/qml" -type f -print0)
+  fi
+  ((${#SYSTEM_QML_FILES[@]})) || return 0
+  if ((DRY_RUN)); then
+    log "Live install would offer to delete ${#SYSTEM_QML_FILES[@]} existing system Quickshell source files (default: keep)"
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    log "Keeping existing system QML; deletion requires an interactive response"
+    return 0
+  fi
+  printf 'Delete %s existing Quickshell source files under %s? [y/N] ' "${#SYSTEM_QML_FILES[@]}" "$system_qml"
+  if read -r answer && [[ "$answer" == y || "$answer" == Y ]]; then
+    REMOVE_SYSTEM_QML=1
+  fi
+}
+
+finish_live_install() {
+  local next_manifest="$1" path
+  ((LIVE)) || return 0
+  for path in "${SYSTEM_QML_FILES[@]}"; do
+    if ((REMOVE_SYSTEM_QML)); then
+      run sudo rm -f -- "$path"
+    elif [[ -f "$path" || -L "$path" ]]; then
+      # Keep ownership of retained files for future updates/uninstallation.
+      grep -Fqx -- "$path" "$next_manifest" || printf '%s\n' "$path" >> "$next_manifest"
+    fi
+  done
+}
+
 remove_obsolete_manifest_files() {
   local previous_manifest="$1"
   local next_manifest="$2"
@@ -514,6 +579,9 @@ remove_obsolete_manifest_files() {
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     [[ "$path" == /usr/* ]] || die "unsafe path in previous install manifest: $path"
+    if ((LIVE)) && is_system_qml "$path"; then
+      continue
+    fi
     grep -Fqx -- "$path" "$next_manifest" || run sudo rm -f -- "$path"
   done < "$previous_manifest"
 }
@@ -525,10 +593,12 @@ build_tide_island() {
   build_dir="$root/build-release-installer"
   mkdir -p "$cache_dir"
 
+  prepare_live_install
   log "Configuring Tide Island"
   run cmake -U CMAKE_INSTALL_LIBDIR -GNinja -S "$root" -B "$build_dir" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX="$PREFIX"
+    -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DTIDE_ISLAND_LIVE="$LIVE"
   run cmake --build "$build_dir" --parallel
   run ctest --test-dir "$build_dir" --output-on-failure
 
@@ -544,10 +614,15 @@ build_tide_island() {
     : > "$previous_manifest"
   fi
 
-  log "Installing Tide Island to /usr"
+  if ((LIVE)); then
+    log "Installing binaries and native modules to /usr; loading Quickshell QML from $root"
+  else
+    log "Installing Tide Island to /usr"
+  fi
   run sudo cmake --install "$build_dir"
   if ((!DRY_RUN)); then
     remove_obsolete_manifest_files "$previous_manifest" "$build_dir/install_manifest.txt"
+    finish_live_install "$build_dir/install_manifest.txt"
   fi
   run sudo install -d -m 0755 "$STATE_DIR"
   run sudo install -m 0644 "$build_dir/install_manifest.txt" "$INSTALL_MANIFEST"
